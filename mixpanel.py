@@ -1,150 +1,134 @@
+"""
+>>> mp = mixpanel.Mixpanel('TOKEN')
+>>> mp.track('Button Clicked')
+>>> mp.track('Button Clicked', {'Account Type': 'Premium'})
+>>> mp.set('DISTINCT_ID', {'Account Type': 'Premium'})
+>>> mp.unset('DISTINCT_ID', ['Hello'])
+>>> mp.add('DISTINCT_ID', {'Account Type': 'Premium'})
+>>> mp.append('DISTINCT_ID', {')
+>>> mp.union('DISTINCT_ID', {'Favorite Teams': ['Leafs', 'Jays']})
+>>> mp.delete('DISTINCT_ID')
+
+mp = mixpanel.Mixpanel('TOKEN')
+mp.track('Button Clicked', {
+})
+
+mp.set('123', {'Account Type': 'Free'})
+mp.unset('123', ['Account Type'])
+mp.add('123', {'Comments Made': 1})
+mp.union('123', {'': ['Free', '']})
+mp.delete('123')
+
+mp = mixpanel.Mixpanel('TOKEN')
+mp.track_batch([
+    {
+        'event': 'Button Clicked',
+        'properties': {
+            'distinct_id': 'userid1',
+            'Account Type': 'Premium',
+        }
+    },
+    {
+        'event': 'Sign Up',
+        'properties': {
+            'distinct_id': 'userid2',
+            'Account Type': 'Free',
+        }
+    },
+])
+
+mp = mixpanel.Mixpanel('TOKEN')
+mp.engage_batch([
+    {
+        '$distinct_id': 'userid1',
+        '$set': {
+            'Account Type': 'Premium',
+        }
+    },
+    {
+        '$distinct_id': 'userid2',
+        '$set': {
+            'Account Type': 'Free',
+        }
+    },
+    {
+        '$distinct_id': 'userid3',
+        '$add': {
+            'Videos Watched': 1,
+        }
+    },
+])
+
+"""
+
 import base64
 import json
 import urllib
 import urllib2
 
 class Mixpanel(object):
-    """ 
-    To use mixpanel, create a new Mixpanel object using your token.
-    Use this object to start tracking.
-    Example:
-        mp = Mixpanel('36ada5b10da39a1347559321baf13063')
-    """ 
-    def __init__(self, token, base_url='https://api.mixpanel.com/'):
+
+    def __init__(self, token, base_url='https://api.mixpanel.com', batch=False):
         self._token = token
         self._base_url = base_url
 
-    """ 
-    For internal use. Writes a request taking in either 'track/' for events or
-    'engage/' for people. 
-    """ 
-    def _write_request(self, endpoint, request):
-        data = urllib.urlencode({'data': base64.b64encode(json.dumps(request))})
-        try:
-            response = urllib2.urlopen(''.join([self._base_url,endpoint]), data).read()
-        except urllib2.HTTPError as e:
-            # remove when done with development
-            print e.read()
-            raise e
-        if response == '1':
-            # remove when done with development 
-            print 'success' 
-        else:
-            raise RuntimeError('%s failed', endpoint)
+    def _write(self, endpoint, data, **params):
+        if len(data) > 50:
+            raise ValueError('batch exceeds 50 item max')
+        params['data'] = base64.b64encode(json.dumps(data, separators=(',', ':')))
+        params['verbose'] = 1
+        response = json.load(urllib2.urlopen(self._base_url + endpoint, urllib.urlencode(params)))
+        if response['status'] == 0:
+            raise RuntimeError(response['error'])
 
-    """ 
-    For internal use. Sends a list of events or people in a POST request.
-    Useful if sending a lot of requests at once.
-    """ 
-    def _send_batch(self, endpoint, request): 
-        for item in request:
-            item['properties'] = item['properties'].update({'token': self._token})
-        data = urllib.urlencode({'data': base64.b64encode(json.dumps(request))})
-        try:
-            request = urllib2.Request(''.join([self._base_url, endpoint]), data)
-            response = urllib2.urlopen(request).read()
-        except urllib2.HTTPError as e:
-            # remove when done with development
-            print e.read()
-            raise e
-        if response == '1':
-            # remove when done with development 
-            print 'success' 
-        else:
-            raise RuntimeError('%s failed', endpoint)
+    def alias(self, alias, distinct_id):
+        self.track('$create_alias', {'alias': alias, 'distinct_id': distinct_id})
 
-    """ 
-    For basic event tracking. Should pass in name of event name and dictionary
-    of properties.
-    Example:
-        mp.track('clicked button', { 'color': 'blue', 'text': 'no' })
-    """ 
-    def track(self, event_name, properties, geolocate_ip=False, verbose=True):
-        assert(type(event_name) == str), 'event_name not a string'
-        assert(len(event_name) > 0), 'event_name empty string'
-        assert(type(properties) == dict), 'properties not dictionary'
-        all_properties = { '$token' : self._token }
-        all_properties.update(properties)
-        all_properties.update( {'ip': (0 if not geolocate_ip else 1), 'verbose': verbose} )
-        event = {
-            'event': event_name,
-            'properties': all_properties, 
-        }
-        self._write_request('track/', event)
+    def track(self, event_name, properties={}, geolocate_ip=False):
+        event = {'event': event_name, 'properties': properties}
+        self.track_batch([event], geolocate_ip=geolocate_ip)
 
-    """
-    For all people tracking. Should pass in distinct_id, type of update,
-    and dictionary of properties.
-    Examples:
-        person1 = {
-                      'Address': '1313 Mockingbird Lane',
-                      'Birthday': '1948-01-01'
-                  }
-        mp.engage('13793', '$set', person1)
-        mp.engage('13793', '$add', { 'Coins Gathered': '12' })
-        mp.engage('13793', '$unset', [ 'Birthday' ])
-        mp.engage('13793', '$delete', '')
-    """
-    def engage(self, distinct_id, update_type, properties):
-        assert(type(distinct_id) == str), 'distinct_id not a string'
-        assert(len(distinct_id) > 0), 'distinct_id empty string'
-        assert(type(update_type) == str), 'update_type not a string'
-        assert(len(update_type) > 0), 'update_type empty string'
+    def track_batch(self, events, geolocate_ip=False):
+        for event in events:
+            event['properties']['token'] = self._token
+            self._validate_event(event)
+        self._write('/track', events, ip=1 if geolocate_ip else 0)
+
+    def engage(self, op, distinct_id, properties, geolocate_ip=False, time=None, update_last_seen=False):
         record = {
-            '$token': self._token,
+            '$token': token,
             '$distinct_id': distinct_id,
-             update_type: properties,
+             op: properties,
         }
-        self._write_request('engage/', record)
+        if time is not None:
+            record['$time'] = time
+        self.engage_batch([record], geolocate_ip=geolocate_ip, update_last_seen=update_last_seen)
 
-    """
-    Allows you to set a custom alias for people records.
-    Example:
-        mp.alias('amy@mixpanel.com', '13793')
-    """
-    def alias(self, alias_id, original):
-        record = {
-            'event': '$create_alias',
-            'properties': {
-                'distinct_id': original, 
-                'alias': alias_id,
-                'token': self._token,
-            } 
-        }
-        self._write_request('engage/', record)
+    def engage_batch(self, records, geolocate_ip=False, update_last_seen=False):
+        for record in records:
+            record['$token'] = self._token
+            if '$ignore_time' not in record and not update_last_seen:
+                record['$ignore_time'] = True
+            self._validate_record(record)
+        self._write('/engage', records, ip=1 if geolocate_ip else 0)
 
-    """
-    If sending many events at once, this is useful. Accepts lists of 50 events
-    at a time and sends them via a POST request.
+    def set(self, distinct_id, properties, geolocate_ip=False, time=None, update_last_seen=False):
+        self.engage('$set', distinct_id, properties, geolocate_ip=geolocate_ip, time=time, update_last_seen=update_last_seen)
 
-    Example:
+    def set_once(self, distinct_id, properties, geolocate_ip=False, time=None, update_last_seen=False):
+        self.engage('$set_once', distinct_id, properties, geolocate_ip=geolocate_ip, time=time, update_last_seen=update_last_seen)
 
-    events_list = [
-        {
-            "event": "Signed Up",
-            "properties": {
-                "distinct_id": "13793",
-                "Referred By": "Friend",
-                "time": 1371002000
-            }
-        },
-        {
-             "event": "Uploaded Photo",
-              "properties": {
-                  "distinct_id": "13793",
-                  "Topic": "Vacation",
-                  "time": 1371002104
-              }
-        }
-    ]
+    def unset(self, distinct_id, properties, geolocate_ip=False, time=None, update_last_seen=False):
+        self.engage('$unset', distinct_id, properties, geolocate_ip=geolocate_ip, time=time, update_last_seen=update_last_seen)
 
-    mp.send_events_batch(events_list)
-    
-    """
-    def send_events_batch(self, data):
-        self.__send_batch(data, 'track/')
+    def add(self, distinct_id, properties, geolocate_ip=False, time=None, update_last_seen=False):
+        self.engage('$add', distinct_id, properties, geolocate_ip=geolocate_ip, time=time, update_last_seen=update_last_seen)
 
-    def send_people_batch(self, data):
-        self.__send_batch(data, 'engage/')
+    def append(self, distinct_id, properties, geolocate_ip=False, time=None, update_last_seen=False):
+        self.engage('$append', distinct_id, properties, geolocate_ip=geolocate_ip, time=time, update_last_seen=update_last_seen)
 
+    def union(self, distinct_id, properties, geolocate_ip=False, time=None, update_last_seen=False):
+        self.engage('$union', distinct_id, properties, geolocate_ip=geolocate_ip, time=time, update_last_seen=update_last_seen)
 
+    def delete(self, distinct_id):
+        self.engage('$delete', distinct_id, {})
