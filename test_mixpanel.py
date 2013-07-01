@@ -11,21 +11,11 @@ class MixpanelTestCase(unittest.TestCase):
         print "tear down"
 
     def test_constructor(self):
-        mp = mixpanel.Mixpanel()
+        mp = mixpanel.Mixpanel("1234")
 
     def test_track1(self):
         mp = mixpanel.Mixpanel("1234")
         mp.track("pushed button", {"color": "blue", "weight": "5lbs"})    
-
-    def test_track2(self):
-        mp = mixpanel.Mixpanel("1234")
-        mp.track("event2", {"x": "y", "poppin": "tags", "ip": "something"})
-
-    # woo this test actually passes
-    def test_identify(self):
-        mp = mixpanel.Mixpanel("1234")
-        mp.identify("2345")
-        self.assertEqual(mp._distinct_id, "2345")
 
 if __name__ == "__main__":
     unittest.main()
